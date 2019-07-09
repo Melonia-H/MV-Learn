@@ -1,3 +1,18 @@
+//#include <iostream>
+////#include "test_data.h"
+//#include "test_tensor.h"
+
+//int main()
+//{
+
+
+//    TestTensor test_tensor;
+//    test_tensor.test_lanenet();
+
+//    return 0;
+//}
+
+
 #include <fstream>
 #include <utility>
 #include <vector>
@@ -21,6 +36,10 @@
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/public/session.h"
 #include "tensorflow/core/util/command_line_flags.h"
+
+#include <opencv2/opencv.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include "lanenet_cluster.h"
 
 // These are all common classes it's handy to reference with no namespace.
 using tensorflow::Flag;
@@ -146,6 +165,36 @@ Status LoadGraph(const string& graph_file_name,
     return Status::OK();
 }
 
+Status GetBinaryData(Tensor decode_logits, std::vector<Tensor>* out_tensors)
+{
+    auto root = tensorflow::Scope::NewRootScope();
+    using namespace ::tensorflow::ops;  // NOLINT(build/namespaces)
+
+    string input_name = "decode_logits";
+    string output_name = "out";
+
+    // read file_name into a tensor named input
+    Tensor input(tensorflow::DT_FLOAT, tensorflow::TensorShape({8,256,512,2}));
+    input = decode_logits;
+
+    std::vector<std::pair<string, tensorflow::Tensor>> inputs = {
+        {"input", input},
+    };
+
+    auto reader = Placeholder(root.WithOpName("input"), tensorflow::DataType::DT_FLOAT);
+
+    tensorflow::ops::ArgMax(root.WithOpName(output_name), tensorflow::ops::Softmax(root, reader), -1);
+
+    tensorflow::GraphDef graph;
+    TF_RETURN_IF_ERROR(root.ToGraphDef(&graph));
+
+    std::unique_ptr<tensorflow::Session> session(
+        tensorflow::NewSession(tensorflow::SessionOptions()));
+    TF_RETURN_IF_ERROR(session->Create(graph));
+    TF_RETURN_IF_ERROR(session->Run({inputs}, {output_name}, {}, out_tensors));
+    return Status::OK();
+}
+
 int main(int argc, char* argv[])
 {
     string image = "/home/maohui/all_files/a_programs/TestCar/laneDetect/programs/tensorflow/test/testTensorC/data/0001.png";
@@ -156,11 +205,11 @@ int main(int argc, char* argv[])
     float input_std = 255;
     string input_layer1 = "input_tensor:0";
     string input_layer2 = "net_phase:0";
-    string output_layer = "lanenet_model/pix_embedding_relu:0";
     string root_dir = "";
 
     auto root = tensorflow::Scope::NewRootScope();
 
+    /* load graph */
     std::unique_ptr<tensorflow::Session> session;
     string graph_path = tensorflow::io::JoinPath(root_dir, graph);
     Status load_graph_status = LoadGraph(graph_path, &session);
@@ -168,7 +217,7 @@ int main(int argc, char* argv[])
         LOG(ERROR) << load_graph_status;
         return -1;
     }
-
+    /* load image */
     std::vector<Tensor> resized_tensors;
     string image_path = tensorflow::io::JoinPath(root_dir, image);
     Status read_tensor_status =
@@ -178,6 +227,8 @@ int main(int argc, char* argv[])
         LOG(ERROR) << read_tensor_status;
         return -1;
     }
+
+    /* convert tensor */
     const Tensor& resized_tensor = resized_tensors[0];
 
     Tensor input_tensor(tensorflow::DT_FLOAT, tensorflow::TensorShape({8,256, 512,3}));
@@ -203,22 +254,78 @@ int main(int argc, char* argv[])
     auto matrix1 = phase.scalar<bool>();
     matrix1()= false;
 
-//    auto is_phase = tensorflow::ops::Const(root.WithOpName(input_layer2), false);
-
-    std::cout << input_tensor.shape() <<std::endl;
-    std::cout << phase.shape() <<std::endl;
+//    std::cout << input_tensor.shape() <<std::endl;
+//    std::cout << phase.shape() <<std::endl;
 
     std::vector<std::pair<string, tensorflow::Tensor>> inputs = {
         {input_layer1, input_tensor},
         {input_layer2, phase}
     };
 
+    /* run graph */
+    string output_layer = "lanenet_model/pix_embedding_relu:0";
     std::vector<Tensor> results;
     Status run_status = session->Run({inputs}, {output_layer}, {}, &results);
     if (!run_status.ok()) {
         LOG(ERROR) << "Running model failed: " << run_status;
         return -1;
     }
+    std::string  out_1 = "lanenet_model/inference/LaneNetSeg/fullconv/conv2d_transpose";
+    std::vector<Tensor> results1;
+    Status run_status1 = session->Run({inputs}, {out_1}, {}, &results1);
+    if (!run_status1.ok()) {
+        LOG(ERROR) << "Running model failed: " << run_status1;
+        return -1;
+    }
+
+    /* get graph result */
+    Tensor instance_seg_image = results.at(0);
+    Tensor decode_logits = results1.at(0);
+
+    std::cout << "instance_seg_image" << instance_seg_image.shape() <<std::endl;
+    std::cout << "decode_logits" << decode_logits.shape() <<std::endl;
+
+    auto matrix_instance = instance_seg_image.tensor<float, 4>();
+    float instance_data[1][256][512][4];
+    for (int a = 0; a < 1; ++a) {
+        for (int y = 0; y < input_height; ++y) {
+            for (int x = 0; x < input_width; ++x) {
+                for (int c = 0; c < 4; ++c)
+                    instance_data[a][y][x][c] = matrix_instance(a, y, x,c);
+            }
+        }
+    }
+
+    auto matrix_binary = decode_logits.tensor<float, 4>();
+    float binary_data[1][256][512][2];
+    for (int a = 0; a < 1; ++a) {
+        for (int y = 0; y < input_height; ++y) {
+            for (int x = 0; x < input_width; ++x) {
+                for (int c = 0; c < 4; ++c)
+                    binary_data[a][y][x][c] = matrix_binary(a, y, x,c);
+            }
+        }
+    }
+
+    std::vector<Tensor> out;
+    Status binary_status = GetBinaryData(decode_logits, &out);
+    if (!binary_status.ok()) {
+        LOG(ERROR) << read_tensor_status;
+        return -1;
+    }
+
+    Tensor binary_seg_image = out[0];
+
+    std::cout << out.size() <<std::endl;
+    std::cout << binary_seg_image.shape() <<std::endl;
+
+
+
+
+    LaneNetCluster cluster;
+//    cluster.SetBinaryData(binary_data);
+//    cluster.SetInstanceData(instance_data);
+    //cluster.GetLaneMask(a, instance_data);
 
     return 0;
 }
