@@ -295,18 +295,6 @@ int main(int argc, char* argv[])
             }
         }
     }
-
-    auto matrix_binary = decode_logits.tensor<float, 4>();
-    float binary_data[1][256][512][2];
-    for (int a = 0; a < 1; ++a) {
-        for (int y = 0; y < input_height; ++y) {
-            for (int x = 0; x < input_width; ++x) {
-                for (int c = 0; c < 4; ++c)
-                    binary_data[a][y][x][c] = matrix_binary(a, y, x,c);
-            }
-        }
-    }
-
     std::vector<Tensor> out;
     Status binary_status = GetBinaryData(decode_logits, &out);
     if (!binary_status.ok()) {
@@ -315,18 +303,36 @@ int main(int argc, char* argv[])
     }
 
     Tensor binary_seg_image = out[0];
+//    std::cout << binary_seg_image.shape() <<std::endl;
 
-    std::cout << out.size() <<std::endl;
-    std::cout << binary_seg_image.shape() <<std::endl;
-
-
-
+    auto input_map = binary_seg_image.tensor<long long int, 3>();
+    long int binary_data[1][256][512];
+    for (int a = 0; a < 1; ++a) {
+        for (int y = 0; y < input_height; ++y) {
+            for (int x = 0; x < input_width; ++x) {
+                binary_data[a][y][x] = input_map(a,y,x);
+            }
+        }
+    }
 
     LaneNetCluster cluster;
-//    cluster.SetBinaryData(binary_data);
-//    cluster.SetInstanceData(instance_data);
-    //cluster.GetLaneMask(a, instance_data);
+    cluster.GetLaneMask(binary_data, instance_data);
 
     return 0;
 }
 
+/*
+ Tensor my_ten(...built with Shape{planes: 4, rows: 3, cols: 5}...);
+// 1D Eigen::Tensor, size 60:
+auto flat = my_ten.flat<T>();
+// 2D Eigen::Tensor 12 x 5:
+auto inner = my_ten.flat_inner_dims<T>();
+// 2D Eigen::Tensor 4 x 15:
+auto outer = my_ten.shaped<T, 2>({4, 15});
+// CHECK fails, bad num elements:
+auto outer = my_ten.shaped<T, 2>({4, 8});
+// 3D Eigen::Tensor 6 x 5 x 2:
+auto weird = my_ten.shaped<T, 3>({6, 5, 2});
+// CHECK fails, type mismatch:
+auto bad   = my_ten.flat<int32>();
+*/
