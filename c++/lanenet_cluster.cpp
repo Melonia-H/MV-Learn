@@ -52,8 +52,10 @@ int LaneNetCluster::GetLaneMask(long int binary_seg_ret[1][256][512], float inst
         return -1;
     }
     PyObject* pResult = PyObject_CallObject(pFunc, pArgs);
-    if(pResult == NULL)
+    if(pResult == NULL) {
+        std::cout << " return error " << std::endl;
         return -1;
+    }
 
     //ConvertToArray(pResult);
 
@@ -75,9 +77,27 @@ I0709 16:37:19.137446 22397 test1.py:40] ----------------------------
 
 */
 
-void LaneNetCluster::GetLanePts(PyObject *object)
+void LaneNetCluster::GetLanePts(PyObject *object) //list numpy array   ---> list(array1(?,2), array2(?,2), array3(?,2))
 {
+    int Index_i = 0, Index_k = 0, Index_m = 0, Index_n = 0;
+    if(PyList_Check(object)) {
 
+        int SizeOfList = PyList_Size(object);
+        for(Index_i = 0; Index_i < SizeOfList; Index_i++) {
+            PyArrayObject *ListItem = (PyArrayObject *)PyList_GetItem(object, Index_i);
+            int Rows = ListItem->dimensions[0], columns = ListItem->dimensions[1];
+            std::cout<<"The "<<Index_i<<"th Array is:"<<std::endl;
+            for(Index_m = 0; Index_m < Rows; Index_m++) {
+                for(Index_n = 0; Index_n < columns; Index_n++) {
+                    std::cout<<*(double *)(ListItem->data + Index_m * ListItem->strides[0] + Index_n * ListItem->strides[1])<<" ";
+                }
+                std::cout<<std::endl;
+            }
+            Py_DECREF(ListItem);
+        }
+    } else {
+        std::cout<<"Not a List"<<std::endl;
+    }
 }
 
 void LaneNetCluster::ConvertToArray(PyObject *object)
